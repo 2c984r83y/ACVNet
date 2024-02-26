@@ -66,7 +66,8 @@ class hourglass(nn.Module):
 
         self.conv4 = nn.Sequential(convbn_3d(in_channels * 4, in_channels * 4, 3, 1, 1),
                                    nn.ReLU(inplace=True))
-
+        #! attention block
+        # 16 heads
         self.attention_block = attention_block(channels_3d=in_channels * 4, num_heads=16, block=(4, 4, 4))
 
         self.conv5 = nn.Sequential(
@@ -105,6 +106,7 @@ class ACVNet(nn.Module):
                                                     bias=False))
 
         self.patch = nn.Conv3d(40, 40, kernel_size=(1,3,3), stride=1, dilation=1, groups=40, padding=(0,1,1), bias=False)
+        # MAPM
         self.patch_l1 = nn.Conv3d(8, 8, kernel_size=(1,3,3), stride=1, dilation=1, groups=8, padding=(0,1,1), bias=False)
         self.patch_l2 = nn.Conv3d(16, 16, kernel_size=(1,3,3), stride=1, dilation=2, groups=16, padding=(0,2,2), bias=False)
         self.patch_l3 = nn.Conv3d(16, 16, kernel_size=(1,3,3), stride=1, dilation=3, groups=16, padding=(0,3,3), bias=False)
@@ -116,7 +118,7 @@ class ACVNet(nn.Module):
         self.classif_att_ = nn.Sequential(convbn_3d(32, 32, 3, 1, 1),
                                       nn.ReLU(inplace=True),
                                       nn.Conv3d(32, 1, kernel_size=3, padding=1, stride=1, bias=False))
-
+        # downsampling residual
         self.dres0 = nn.Sequential(convbn_3d(self.concat_channels * 2, 32, 3, 1, 1),
                                    nn.ReLU(inplace=True),
                                    convbn_3d(32, 32, 3, 1, 1),
@@ -140,14 +142,16 @@ class ACVNet(nn.Module):
         self.classif2 = nn.Sequential(convbn_3d(32, 32, 3, 1, 1),
                                       nn.ReLU(inplace=True),
                                       nn.Conv3d(32, 1, kernel_size=3, padding=1, stride=1, bias=False))
-
+        # initialize weights
         for m in self.modules():
+            # He初始化
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
             elif isinstance(m, nn.Conv3d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.kernel_size[2] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
+            # 将权重全部填充为1，将偏置全部填充为0
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
@@ -160,24 +164,31 @@ class ACVNet(nn.Module):
     def forward(self, left, right):
 
         if self.freeze_attn_weights:
+            # freeze the attention weights
             with torch.no_grad():
                 features_left = self.feature_extraction(left)
                 features_right = self.feature_extraction(right)
-                gwc_volume = build_gwc_volume(features_left["gwc_feature"], features_right["gwc_feature"], self.maxdisp // 4, self.num_groups)
+                gwc_volume = build_gwc_volume(features_left["gwc_feature"], 
+                                              features_right["gwc_feature"], 
+                                              self.maxdisp // 4, self.num_groups)
                 gwc_volume = self.patch(gwc_volume)
+                # MAPM
                 patch_l1 = self.patch_l1(gwc_volume[:, :8])
                 patch_l2 = self.patch_l2(gwc_volume[:, 8:24])
                 patch_l3 = self.patch_l3(gwc_volume[:, 24:40])
                 patch_volume = torch.cat((patch_l1,patch_l2,patch_l3), dim=1)
+                # Attention weights generation
                 cost_attention = self.dres1_att_(patch_volume)
-                cost_attention = self.dres2_att_(cost_attention)
+                cost_attention = self.dres2_att_(cost_attention)    #regularize
                 att_weights = self.classif_att_(cost_attention)
 
         else:
 
             features_left = self.feature_extraction(left)
             features_right = self.feature_extraction(right)
-            gwc_volume = build_gwc_volume(features_left["gwc_feature"], features_right["gwc_feature"], self.maxdisp // 4, self.num_groups)
+            gwc_volume = build_gwc_volume(features_left["gwc_feature"], 
+                                          features_right["gwc_feature"], 
+                                          self.maxdisp // 4, self.num_groups)
             gwc_volume = self.patch(gwc_volume)
             patch_l1 = self.patch_l1(gwc_volume[:, :8])
             patch_l2 = self.patch_l2(gwc_volume[:, 8:24])
@@ -188,10 +199,14 @@ class ACVNet(nn.Module):
             att_weights = self.classif_att_(cost_attention)
 
         if not self.attn_weights_only:
+            # concat feature
             concat_feature_left = self.concatconv(features_left["gwc_feature"])
-            concat_feature_right = self.concatconv(features_right["gwc_feature"])  
+            concat_feature_right = self.concatconv(features_right["gwc_feature"])
+            # concat volume
             concat_volume = build_concat_volume(concat_feature_left, concat_feature_right, self.maxdisp // 4)
+            # filter using attention weights
             ac_volume = F.softmax(att_weights, dim=2) * concat_volume   ### ac_volume = att_weights * concat_volume 
+            # cost aggregation
             cost0 = self.dres0(ac_volume)
             cost0 = self.dres1(cost0) + cost0
             out1 = self.dres2(cost0)
@@ -207,7 +222,7 @@ class ACVNet(nn.Module):
                 pred_attention = disparity_regression(pred_attention, self.maxdisp)
 
             if not self.attn_weights_only:
-
+                # different resolution of cost and pred
                 cost0 = self.classif0(cost0)
                 cost1 = self.classif1(out1)
                 cost2 = self.classif2(out2)    
@@ -235,7 +250,8 @@ class ACVNet(nn.Module):
         else:
 
             if self.attn_weights_only:
-
+                # direct generate pred from attention weights(yellow block in Fig. 2 in the paper)
+                # trilinear interpolate influence accuaracy?
                 cost_attention = F.upsample(att_weights, [self.maxdisp, left.size()[2], left.size()[3]], mode='trilinear')
                 cost_attention = torch.squeeze(cost_attention, 1)
                 pred_attention = F.softmax(cost_attention, dim=1)

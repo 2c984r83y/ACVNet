@@ -389,8 +389,8 @@ class attention_block(nn.Module):
         self.block = block
         self.dim_3d = channels_3d
         self.num_heads = num_heads
-        head_dim_3d = self.dim_3d // num_heads
-        self.scale_3d = head_dim_3d ** -0.5
+        head_dim_3d = self.dim_3d // num_heads  # 每个head的维度
+        self.scale_3d = head_dim_3d ** -0.5 # 缩放因子
         self.qkv_3d = nn.Linear(self.dim_3d, self.dim_3d * 3, bias=True)
         self.final1x1 = torch.nn.Conv3d(self.dim_3d, self.dim_3d, 1)
 
@@ -410,6 +410,9 @@ class attention_block(nn.Module):
         qkv_3d = self.qkv_3d(x).reshape(B, d*h*w, self.block[0]*self.block[1]*self.block[2], 3, self.num_heads,
                                             C // self.num_heads).permute(3, 0, 1, 4, 2, 5)  #[3,B,d*h*w,num_heads,blocks,C//num_heads]
         q_3d, k_3d, v_3d = qkv_3d[0], qkv_3d[1], qkv_3d[2]
+        # 根据 Query(q_3d) 和 Key(k_3d) 计算两者的相似性或者相关性
+        # q dot product k 
+        # @: 矩阵乘法
         attn = (q_3d @ k_3d.transpose(-2, -1)) * self.scale_3d
         if pad_r > 0 or pad_b > 0:
             mask = torch.zeros((1, H, W), device=x.device)
@@ -419,9 +422,9 @@ class attention_block(nn.Module):
             attn_mask = mask.unsqueeze(2) - mask.unsqueeze(3)  # 1, _h*_w, self.block*self.block, self.block*self.block
             attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
             attn = attn + attn_mask.repeat(1, d, self.block[0], self.block[0]).unsqueeze(2)
-
+        # 对 atten 进行归一化处理
         attn = torch.softmax(attn, dim=-1)
-
+        # 根据权重系数对 Value(v_3d) 进行加权求和
         x = (attn @ v_3d).view(B, d, h ,w, self.num_heads, self.block[0], self.block[1], self.block[2], -1).permute(0,4,8,1,5,2,6,3,7)
         x = x.reshape(B, C, D, H, W)
         if pad_r > 0 or pad_b > 0:

@@ -1,6 +1,7 @@
 # from __future__ import print_function, division
 import argparse
 import os
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -22,19 +23,19 @@ import gc
 import cv2
 
 cudnn.benchmark = True
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 
 parser = argparse.ArgumentParser(description='Attention Concatenation Volume for Accurate and Efficient Stereo Matching (ACVNet)')
 parser.add_argument('--model', default='acvnet', help='select a model structure', choices=__models__.keys())
 parser.add_argument('--maxdisp', type=int, default=192, help='maximum disparity')
 parser.add_argument('--dataset', default='kitti', help='dataset name', choices=__datasets__.keys())
-parser.add_argument('--kitti15_datapath', default='/home/xgw/data/KITTI_2015/', help='data path')
-parser.add_argument('--kitti12_datapath', default='/home/xgw/data/KITTI_2012/', help='data path')
+parser.add_argument('--kitti15_datapath', default='/home/zhaoqinghao/dataset/KITTI_2015/', help='data path')
+parser.add_argument('--kitti12_datapath', default='/home/zhaoqinghao/dataset/KITTI_2012/', help='data path')
 parser.add_argument('--trainlist', default='./filenames/kitti12_15_all.txt', help='training list')
 parser.add_argument('--testlist',default='./filenames/kitti15_val.txt', help='testing list')
 parser.add_argument('--lr', type=float, default=0.001, help='base learning rate')
-parser.add_argument('--batch_size', type=int, default=16, help='training batch size')
-parser.add_argument('--test_batch_size', type=int, default=8, help='testing batch size')
+parser.add_argument('--batch_size', type=int, default=2, help='training batch size')
+parser.add_argument('--test_batch_size', type=int, default=2, help='testing batch size')
 parser.add_argument('--epochs', type=int, default=600, help='number of epochs to train')
 parser.add_argument('--lrepochs',default="400:10", type=str,  help='the epochs to decay lr: the downscale rate')
 parser.add_argument('--logdir',default='./checkpoints/', help='the directory to save logs and checkpoints')
@@ -145,10 +146,12 @@ def train_sample(sample, compute_metrics=False):
     imgL, imgR, disp_gt = sample['left'], sample['right'], sample['disparity']
     imgL = imgL.cuda()
     imgR = imgR.cuda()
+    print(disp_gt.shape)
     disp_gt = disp_gt.cuda()
     optimizer.zero_grad()
     disp_ests = model(imgL, imgR)
     mask = (disp_gt < args.maxdisp) & (disp_gt > 0)
+    
     loss = model_loss_train(disp_ests, disp_gt, mask)
     scalar_outputs = {"loss": loss}
     image_outputs = {"disp_est": disp_ests, "disp_gt": disp_gt, "imgL": imgL, "imgR": imgR}
