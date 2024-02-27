@@ -41,11 +41,12 @@ parser.add_argument('--test_batch_size', type=int, default=2, help='testing batc
 parser.add_argument('--epochs', type=int, default=600, help='number of epochs to train')
 parser.add_argument('--lrepochs',default="400:10", type=str,  help='the epochs to decay lr: the downscale rate')
 parser.add_argument('--logdir',default='./checkpoints/', help='the directory to save logs and checkpoints')
-parser.add_argument('--loadckpt', default='./pretrained_model/sceneflow.ckpt',help='load the weights from a specific checkpoint')
-parser.add_argument('--resume', action='store_true', help='continue training the model')
+# parser.add_argument('--loadckpt', default='./pretrained_model/sceneflow.ckpt',help='load the weights from a specific checkpoint')
+parser.add_argument('--loadckpt', default='',help='load the weights from a specific checkpoint')
+parser.add_argument('--resume', default=False, action='store_true', help='continue training the model')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='random seed (default: 1)')
 parser.add_argument('--summary_freq', type=int, default=20, help='the frequency of saving summary')
-parser.add_argument('--save_freq', type=int, default=1, help='the frequency of saving checkpoint')
+parser.add_argument('--save_freq', type=int, default=4, help='the frequency of saving checkpoint')
 
 # parse arguments, set seeds
 args = parser.parse_args()

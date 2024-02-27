@@ -391,28 +391,36 @@ class attention_block(nn.Module):
         self.num_heads = num_heads
         head_dim_3d = self.dim_3d // num_heads  # 每个head的维度
         self.scale_3d = head_dim_3d ** -0.5 # 缩放因子
+        # 全连接层可以将输入数据的特征数从 self.dim_3d 扩大到 self.dim_3d 的3倍
+        # 以计算查询、键和值这三个部分
         self.qkv_3d = nn.Linear(self.dim_3d, self.dim_3d * 3, bias=True)
         self.final1x1 = torch.nn.Conv3d(self.dim_3d, self.dim_3d, 1)
 
 
     def forward(self, x):
-
+        # pad input to be a multiple of block
         B, C, D, H0, W0 = x.shape
         pad_l = pad_t = 0
         pad_r = (self.block[2] - W0 % self.block[2]) % self.block[2]
         pad_b = (self.block[1] - H0 % self.block[1]) % self.block[1]
+        # pad zeros at edge to make the input shape to be a multiple of block
         x = F.pad(x, (pad_l, pad_r, pad_t, pad_b))
         B, C, D, H, W = x.shape
         d, h, w = D//self.block[0], H//self.block[1], W//self.block[2]
-
+        # x: [B, C, D, H, W] -> [B, d, h, w, self.block[0], self.block[1], self.block[2], C]
         x = x.view(B, C, d,self.block[0], h, self.block[1], w, self.block[2]).permute(0, 2, 4, 6, 3, 5, 7, 1)
-
+        # self.qkv_3d(x) 线性变换，将输入数据的特征数从 self.dim_3d 扩大到 self.dim_3d 的3倍
+        # C // self.num_heads 是每个注意力头的通道数
+        # (3, B, self.numheads, self.block[0]*self.block[1]*self.block[2], C // self.numheads)
+        # reshape: tensor 一维展开后再重新组织
         qkv_3d = self.qkv_3d(x).reshape(B, d*h*w, self.block[0]*self.block[1]*self.block[2], 3, self.num_heads,
-                                            C // self.num_heads).permute(3, 0, 1, 4, 2, 5)  #[3,B,d*h*w,num_heads,blocks,C//num_heads]
+                                            C // self.num_heads).permute(3, 0, 1, 4, 2, 5)
+        # assign q, k, v
+        # (B, self.numheads, self.block[0]*self.block[1]*self.block[2], C // self.numheads)
         q_3d, k_3d, v_3d = qkv_3d[0], qkv_3d[1], qkv_3d[2]
-        # 根据 Query(q_3d) 和 Key(k_3d) 计算两者的相似性或者相关性
-        # q dot product k 
+        # 计算Query(q_3d) 和 Key(k_3d)相似性
         # @: 矩阵乘法
+        # 转置 k_3d 后进行矩阵乘法，得到注意力权重系数
         attn = (q_3d @ k_3d.transpose(-2, -1)) * self.scale_3d
         if pad_r > 0 or pad_b > 0:
             mask = torch.zeros((1, H, W), device=x.device)
@@ -430,7 +438,7 @@ class attention_block(nn.Module):
         if pad_r > 0 or pad_b > 0:
             x = x[:, :, :, :H0, :W0]
         return self.final1x1(x)
-        
+
 
 def disparity_variance(x, maxdisp, disparity):
     # the shape of disparity should be B,1,H,W, return is the variance of the cost volume [B,1,H,W]
