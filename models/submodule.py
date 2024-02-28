@@ -379,7 +379,7 @@ class BasicBlock_groups(nn.Module):
         out += x
 
         return out
-
+# self attention
 class attention_block(nn.Module):
     def __init__(self, channels_3d, num_heads=8, block=4):
         """
@@ -411,28 +411,46 @@ class attention_block(nn.Module):
         x = x.view(B, C, d,self.block[0], h, self.block[1], w, self.block[2]).permute(0, 2, 4, 6, 3, 5, 7, 1)
         # self.qkv_3d(x) 线性变换，将输入数据的特征数从 self.dim_3d 扩大到 self.dim_3d 的3倍
         # C // self.num_heads 是每个注意力头的通道数
-        # (3, B, self.numheads, self.block[0]*self.block[1]*self.block[2], C // self.numheads)
+        # (3, B, d*h*w, self.numheads, self.block[0]*self.block[1]*self.block[2], C // self.numheads)
         # reshape: tensor 一维展开后再重新组织
+        # permute: tensor 维度换位
         qkv_3d = self.qkv_3d(x).reshape(B, d*h*w, self.block[0]*self.block[1]*self.block[2], 3, self.num_heads,
                                             C // self.num_heads).permute(3, 0, 1, 4, 2, 5)
         # assign q, k, v
-        # (B, self.numheads, self.block[0]*self.block[1]*self.block[2], C // self.numheads)
+        # (B, d*h*w, self.numheads, self.block[0]*self.block[1]*self.block[2], C // self.numheads)
         q_3d, k_3d, v_3d = qkv_3d[0], qkv_3d[1], qkv_3d[2]
         # 计算Query(q_3d) 和 Key(k_3d)相似性
-        # @: 矩阵乘法
-        # 转置 k_3d 后进行矩阵乘法，得到注意力权重系数
+        # @: torch.matmul
+        # 要求第一个矩阵的列数（最后一个维度）等于第二个矩阵的行数（倒数第二个维度）
+        # a: (2, 3, 4) , b: (4, 5)
+        # (2, 3, 4) @ (4, 5) -> (2, 3, 5)
+        # 使用广播机制将 b 扩充为 (2, 4, 5)
+        # 对每个(3, 4) 和 (4, 5)做矩阵乘法，得到(3, 5)的矩阵
+        # 然后把两个(3, 5)的矩阵拼接起来，得到(2, 3, 5)的矩阵
+        # (a,b,c,d,e,f) @ (a,b,c,d,f,e) -> (a,b,c,d,e,e)
+        # 转置最后和倒数第二个维度后进行矩阵乘法，得到注意力权重系数
+        # q_3d: (B, d*h*w, self.numheads, self.block[0]*self.block[1]*self.block[2], C // self.numheads) 
+        # k_3d: (B, d*h*w, self.numheads, C // self.numheads, self.block[0]*self.block[1]*self.block[2]) 
+        # attn: (B, d*h*w, self.numheads, self.block[0]*self.block[1]*self.block[2], self.block[0]*self.block[1]*self.block[2])
         attn = (q_3d @ k_3d.transpose(-2, -1)) * self.scale_3d
         if pad_r > 0 or pad_b > 0:
             mask = torch.zeros((1, H, W), device=x.device)
+            # 最后 pad_b 行和所有的列填充为 1
             mask[:, -pad_b:, :].fill_(1)
+            # 所有的行的最后 pad_r 列填充为 1
             mask[:, :, -pad_r:].fill_(1)
             mask = mask.reshape(1, h, self.block[1], w, self.block[2]).transpose(2, 3).reshape(1,  h*w, self.block[1]*self.block[2])
+            # unsqueeze: 在指定位置增加一个维度
             attn_mask = mask.unsqueeze(2) - mask.unsqueeze(3)  # 1, _h*_w, self.block*self.block, self.block*self.block
+            #todo: 完善下面的注释
             attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
             attn = attn + attn_mask.repeat(1, d, self.block[0], self.block[0]).unsqueeze(2)
         # 对 atten 进行归一化处理
         attn = torch.softmax(attn, dim=-1)
         # 根据权重系数对 Value(v_3d) 进行加权求和
+        # 将 attn 张量的每一行（最后一个维度，因为 dim=-1）
+        # 转换为一个概率分布，每一行的所有元素的和都为 1
+        # x -> (B, d*h*w, self.numheads, self.block[0]*self.block[1]*self.block[2], self.block[0]*self.block[1]*self.block[2], C // self.numheads)
         x = (attn @ v_3d).view(B, d, h ,w, self.num_heads, self.block[0], self.block[1], self.block[2], -1).permute(0,4,8,1,5,2,6,3,7)
         x = x.reshape(B, C, D, H, W)
         if pad_r > 0 or pad_b > 0:
