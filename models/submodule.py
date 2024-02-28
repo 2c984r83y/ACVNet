@@ -442,8 +442,9 @@ class attention_block(nn.Module):
             mask = mask.reshape(1, h, self.block[1], w, self.block[2]).transpose(2, 3).reshape(1,  h*w, self.block[1]*self.block[2])
             # unsqueeze: 在指定位置增加一个维度
             attn_mask = mask.unsqueeze(2) - mask.unsqueeze(3)  # 1, _h*_w, self.block*self.block, self.block*self.block
-            #todo: 完善下面的注释
+            #  -1000.0 在 softmax 操作后的值接近于 0, 有效地屏蔽掉某些位置
             attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
+            # 在第二维上重复 d 次, 在第三维上重复 self.block[0] 次, 在第四维上重复 self.block[0] 次
             attn = attn + attn_mask.repeat(1, d, self.block[0], self.block[0]).unsqueeze(2)
         # 对 atten 进行归一化处理
         attn = torch.softmax(attn, dim=-1)
@@ -451,7 +452,11 @@ class attention_block(nn.Module):
         # 将 attn 张量的每一行（最后一个维度，因为 dim=-1）
         # 转换为一个概率分布，每一行的所有元素的和都为 1
         # x -> (B, d*h*w, self.numheads, self.block[0]*self.block[1]*self.block[2], self.block[0]*self.block[1]*self.block[2], C // self.numheads)
+        # x -> (B, d, h ,w, self.num_heads, self.block[0], self.block[1], self.block[2], -1)
+        # x -> (B, self.num_heads, -1, d, self.block[0], h, self.block[1], w, self.block[2])
+        # tensor 中的 -1 表示自动计算该维度的大小
         x = (attn @ v_3d).view(B, d, h ,w, self.num_heads, self.block[0], self.block[1], self.block[2], -1).permute(0,4,8,1,5,2,6,3,7)
+        # 注意到: d, h, w = D//self.block[0], H//self.block[1], W//self.block[2]
         x = x.reshape(B, C, D, H, W)
         if pad_r > 0 or pad_b > 0:
             x = x[:, :, :, :H0, :W0]
