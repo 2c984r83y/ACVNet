@@ -29,24 +29,21 @@ parser = argparse.ArgumentParser(description='Attention Concatenation Volume for
 parser.add_argument('--model', default='acvnet', help='select a model structure', choices=__models__.keys())
 parser.add_argument('--dataset', default='dsec_png', help='dataset name', choices=__datasets__.keys())
 parser.add_argument('--maxdisp', type=int, default=192, help='maximum disparity')
-parser.add_argument('--datapath', default='/home/zhaoqinghao/dataset/DSEC/output',
-                    help='datapath')
-parser.add_argument('--trainlist', default='/home/zhaoqinghao/DSEC/test.txt', 
-                    help='training list')
-parser.add_argument('--testlist', default='/home/zhaoqinghao/DSEC/test.txt', 
-                    help='testing list')
+parser.add_argument('--datapath', default='/disk2/users/M22_zhaoqinghao/Dataset/png', help='datapath')
+parser.add_argument('--trainlist', default='/disk2/users/M22_zhaoqinghao/Dataset/png/test_uint16.txt', help='training list')
+parser.add_argument('--testlist', default='/disk2/users/M22_zhaoqinghao/Dataset/png/test_uint16.txt', help='testing list')
 parser.add_argument('--lr', type=float, default=0.001, help='base learning rate')
 parser.add_argument('--batch_size', type=int, default=2, help='training batch size')
 parser.add_argument('--test_batch_size', type=int, default=2, help='testing batch size')
 parser.add_argument('--epochs', type=int, default=600, help='number of epochs to train')
 parser.add_argument('--lrepochs',default="400:10", type=str,  help='the epochs to decay lr: the downscale rate')
-parser.add_argument('--logdir',default='./checkpoints/', help='the directory to save logs and checkpoints')
+parser.add_argument('--logdir',default='./log_dsec_png/', help='the directory to save logs and checkpoints')
 # parser.add_argument('--loadckpt', default='./pretrained_model/sceneflow.ckpt',help='load the weights from a specific checkpoint')
 parser.add_argument('--loadckpt', default='',help='load the weights from a specific checkpoint')
 parser.add_argument('--resume', default=False, action='store_true', help='continue training the model')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='random seed (default: 1)')
 parser.add_argument('--summary_freq', type=int, default=20, help='the frequency of saving summary')
-parser.add_argument('--save_freq', type=int, default=4, help='the frequency of saving checkpoint')
+parser.add_argument('--save_freq', type=int, default=1, help='the frequency of saving checkpoint')
 
 # parse arguments, set seeds
 args = parser.parse_args()
@@ -64,11 +61,12 @@ StereoDataset = __datasets__[args.dataset]
 
 dsec_train = args.trainlist
 dsec_train_dataset = StereoDataset(datapath, dsec_train, True)
-TrainImgLoader = DataLoader(dsec_train_dataset, batch_size= 32, shuffle=True, num_workers=32, drop_last=False)
+TrainImgLoader = DataLoader(dsec_train_dataset, args.batch_size, shuffle=True, num_workers=32, drop_last=False)
 
 dsec_test = args.testlist
 dsec_test_dataset = StereoDataset(datapath, dsec_test, False)
-TestImgLoader = DataLoader(dsec_test_dataset, batch_size= 16, shuffle=False, num_workers=16, drop_last=False)
+TestImgLoader = DataLoader(dsec_test_dataset, args.test_batch_size, shuffle=False, num_workers=16, drop_last=False)
+
 
 # model, optimizer
 model = __models__[args.model](args.maxdisp, False, False)
@@ -158,6 +156,11 @@ def train_sample(sample, compute_metrics=False):
     print(disp_gt.shape)
     disp_gt = disp_gt.cuda()
     optimizer.zero_grad()
+    imgL = imgL.unsqueeze(1)  # imgL 的形状变为 [4, 1, 256, 320]
+    imgL = imgL.expand(-1, 3, -1, -1)  # imgL 的形状变为 [4, 3, 256, 320]
+    imgR = imgR.unsqueeze(1)  # imgR 的形状变为 [4, 1, 256, 320]
+    imgR = imgR.expand(-1, 3, -1, -1)  # imgR 的形状变为 [4, 3, 256, 320]
+    print(imgL.shape)
     disp_ests = model(imgL, imgR)
     mask = (disp_gt < args.maxdisp) & (disp_gt > 0)
     
@@ -184,6 +187,10 @@ def test_sample(sample, compute_metrics=True):
     imgL, imgR, disp_gt = sample['left'], sample['right'], sample['disparity']
     imgL = imgL.cuda()
     imgR = imgR.cuda()
+    imgL = imgL.unsqueeze(1)  # imgL 的形状变为 [4, 1, 256, 320]
+    imgL = imgL.expand(-1, 3, -1, -1)  # imgL 的形状变为 [4, 3, 256, 320]
+    imgR = imgR.unsqueeze(1)  # imgR 的形状变为 [4, 1, 256, 320]
+    imgR = imgR.expand(-1, 3, -1, -1)  # imgR 的形状变为 [4, 3, 256, 320]
     disp_gt = disp_gt.cuda()
     mask = (disp_gt < args.maxdisp) & (disp_gt > 0)
     disp_ests = model(imgL, imgR)

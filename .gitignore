@@ -1,2 +1,4 @@
 *.pyc
 *.ckpt
+# TensorBoard log files
+events.out.tfevents.*

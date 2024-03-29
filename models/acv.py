@@ -104,7 +104,12 @@ class ACVNet(nn.Module):
                                           nn.ReLU(inplace=True),
                                           nn.Conv2d(128, self.concat_channels, kernel_size=1, padding=0, stride=1,
                                                     bias=False))
-
+        # 在 PyTorch 的卷积层中，`groups` 参数用于控制卷积的分组。
+        # 当 `groups=1` 时，表示进行常规的卷积操作，即每个输入通道都可以与所有的卷积核进行卷积。
+        # 当 `groups>1` 时，表示进行分组卷积（grouped convolution）。在这种情况下，
+        # 输入通道和卷积核会被分成 `groups` 个组，每个组的输入通道只能与该组的卷积核进行卷积。这意味着，每个卷积核只能看到输入通道的一部分。
+        # 当 `groups` 等于输入通道数时，表示进行深度卷积（depthwise convolution）。在这种情况下，每个输入通道都有一个专用的卷积核进行卷积。
+        # 分组卷积和深度卷积可以有效地减少计算量和参数数量，同时还可以提高模型的表示能力。
         self.patch = nn.Conv3d(40, 40, kernel_size=(1,3,3), stride=1, dilation=1, groups=40, padding=(0,1,1), bias=False)
         # MAPM
         self.patch_l1 = nn.Conv3d(8, 8, kernel_size=(1,3,3), stride=1, dilation=1, groups=8, padding=(0,1,1), bias=False)
