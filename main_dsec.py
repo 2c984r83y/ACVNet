@@ -30,19 +30,19 @@ parser.add_argument('--model', default='acvnet', help='select a model structure'
 parser.add_argument('--dataset', default='dsec_png', help='dataset name', choices=__datasets__.keys())
 parser.add_argument('--maxdisp', type=int, default=192, help='maximum disparity')
 parser.add_argument('--datapath', default='/disk2/users/M22_zhaoqinghao/Dataset/png', help='datapath')
-parser.add_argument('--trainlist', default='/disk2/users/M22_zhaoqinghao/Dataset/png/test_uint16.txt', help='training list')
+parser.add_argument('--trainlist', default='/disk2/users/M22_zhaoqinghao/Dataset/png/train_uint16.txt', help='training list')
 parser.add_argument('--testlist', default='/disk2/users/M22_zhaoqinghao/Dataset/png/test_uint16.txt', help='testing list')
 parser.add_argument('--lr', type=float, default=0.001, help='base learning rate')
-parser.add_argument('--batch_size', type=int, default=2, help='training batch size')
-parser.add_argument('--test_batch_size', type=int, default=2, help='testing batch size')
-parser.add_argument('--epochs', type=int, default=600, help='number of epochs to train')
-parser.add_argument('--lrepochs',default="400:10", type=str,  help='the epochs to decay lr: the downscale rate')
+parser.add_argument('--batch_size', type=int, default=3, help='training batch size')
+parser.add_argument('--test_batch_size', type=int, default=3, help='testing batch size')
+parser.add_argument('--epochs', type=int, default=64, help='number of epochs to train')
+parser.add_argument('--lrepochs',default="16,24,32,40,48,56:2", type=str,  help='the epochs to decay lr: the downscale rate')
 parser.add_argument('--logdir',default='./log_dsec_png/', help='the directory to save logs and checkpoints')
 # parser.add_argument('--loadckpt', default='./pretrained_model/sceneflow.ckpt',help='load the weights from a specific checkpoint')
 parser.add_argument('--loadckpt', default='',help='load the weights from a specific checkpoint')
-parser.add_argument('--resume', default=False, action='store_true', help='continue training the model')
+parser.add_argument('--resume', default=1, action='store_true', help='continue training the model')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='random seed (default: 1)')
-parser.add_argument('--summary_freq', type=int, default=20, help='the frequency of saving summary')
+parser.add_argument('--summary_freq', type=int, default=50, help='the frequency of saving summary')
 parser.add_argument('--save_freq', type=int, default=1, help='the frequency of saving checkpoint')
 
 # parse arguments, set seeds
@@ -98,23 +98,23 @@ print("start at epoch {}".format(start_epoch))
 def train():
     for epoch_idx in range(start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch_idx, args.lr, args.lrepochs)
-
+        total_train_loss = 0
         # training
         for batch_idx, sample in enumerate(TrainImgLoader):
             global_step = len(TrainImgLoader) * epoch_idx + batch_idx
             start_time = time.time()
             do_summary = global_step % args.summary_freq == 0
-            loss, _, _ = train_sample(sample, compute_metrics=do_summary)
-            # loss, scalar_outputs, image_outputs = train_sample(sample, compute_metrics=do_summary)
-            # if do_summary:
-            #     save_scalars(logger, 'train', scalar_outputs, global_step)
-            #     save_images(logger, 'train', image_outputs, global_step)
-            # del scalar_outputs, image_outputs
+            loss = train_sample(sample, compute_metrics=do_summary)
+            total_train_loss += loss
+            if do_summary:
+                logger.add_scalar('train_loss', loss, global_step)
+                # save_images(logger, 'train', image_outputs, global_step)
             print('Epoch {}/{}, Iter {}/{}, train loss = {:.3f}, time = {:.3f}'.format(epoch_idx, args.epochs,
                                                                                        batch_idx,
                                                                                        len(TrainImgLoader), loss,
                                                                                        time.time() - start_time))
-        
+        print('Epoch %d total training loss = %.3f' %(epoch_idx, total_train_loss/len(TrainImgLoader)))
+        logger.add_scalar('total_train_loss', total_train_loss/len(TrainImgLoader), epoch_idx)
         # saving checkpoints
 
         if (epoch_idx + 1) % args.save_freq == 0:
@@ -131,12 +131,12 @@ def train():
                 global_step = len(TestImgLoader) * epoch_idx + batch_idx
                 start_time = time.time()
                 do_summary = global_step % args.summary_freq == 0
-                loss, scalar_outputs, image_outputs = test_sample(sample, compute_metrics=do_summary)
+                loss, scalar_outputs, _ = test_sample(sample, compute_metrics=do_summary)
                 if do_summary:
                    save_scalars(logger, 'test', scalar_outputs, global_step)
-                   save_images(logger, 'test', image_outputs, global_step)
+                #    save_images(logger, 'test', image_outputs, global_step)
                 avg_test_scalars.update(scalar_outputs)
-                del scalar_outputs, image_outputs
+                del scalar_outputs
                 print('Epoch {}/{}, Iter {}/{}, test loss = {:.3f}, time = {:3f}'.format(epoch_idx, args.epochs,
                                                                                          batch_idx,
                                                                                          len(TestImgLoader), loss,
@@ -153,31 +153,31 @@ def train_sample(sample, compute_metrics=False):
     imgL, imgR, disp_gt = sample['left'], sample['right'], sample['disparity']
     imgL = imgL.cuda()
     imgR = imgR.cuda()
-    print(disp_gt.shape)
+    # print(disp_gt.shape)
     disp_gt = disp_gt.cuda()
     optimizer.zero_grad()
     imgL = imgL.unsqueeze(1)  # imgL 的形状变为 [4, 1, 256, 320]
     imgL = imgL.expand(-1, 3, -1, -1)  # imgL 的形状变为 [4, 3, 256, 320]
     imgR = imgR.unsqueeze(1)  # imgR 的形状变为 [4, 1, 256, 320]
     imgR = imgR.expand(-1, 3, -1, -1)  # imgR 的形状变为 [4, 3, 256, 320]
-    print(imgL.shape)
+    # print(imgL.shape)
     disp_ests = model(imgL, imgR)
     mask = (disp_gt < args.maxdisp) & (disp_gt > 0)
     
     loss = model_loss_train(disp_ests, disp_gt, mask)
-    scalar_outputs = {"loss": loss}
-    image_outputs = {"disp_est": disp_ests, "disp_gt": disp_gt, "imgL": imgL, "imgR": imgR}
-    if compute_metrics:
-        with torch.no_grad():
-            image_outputs["errormap"] = [disp_error_image_func.apply(disp_est, disp_gt) for disp_est in disp_ests]
-            scalar_outputs["EPE"] = [EPE_metric(disp_est, disp_gt, mask) for disp_est in disp_ests]
-            scalar_outputs["D1"] = [D1_metric(disp_est, disp_gt, mask) for disp_est in disp_ests]
-            scalar_outputs["Thres1"] = [Thres_metric(disp_est, disp_gt, mask, 1.0) for disp_est in disp_ests]
-            scalar_outputs["Thres2"] = [Thres_metric(disp_est, disp_gt, mask, 2.0) for disp_est in disp_ests]
-            scalar_outputs["Thres3"] = [Thres_metric(disp_est, disp_gt, mask, 3.0) for disp_est in disp_ests]
+    # scalar_outputs = {"loss": loss}
+    # image_outputs = {"disp_est": disp_ests, "disp_gt": disp_gt, "imgL": imgL, "imgR": imgR}
+    # if compute_metrics:
+    #     with torch.no_grad():
+    #         image_outputs["errormap"] = [disp_error_image_func.apply(disp_est, disp_gt) for disp_est in disp_ests]
+    #         scalar_outputs["EPE"] = [EPE_metric(disp_est, disp_gt, mask) for disp_est in disp_ests]
+    #         scalar_outputs["D1"] = [D1_metric(disp_est, disp_gt, mask) for disp_est in disp_ests]
+    #         scalar_outputs["Thres1"] = [Thres_metric(disp_est, disp_gt, mask, 1.0) for disp_est in disp_ests]
+    #         scalar_outputs["Thres2"] = [Thres_metric(disp_est, disp_gt, mask, 2.0) for disp_est in disp_ests]
+    #         scalar_outputs["Thres3"] = [Thres_metric(disp_est, disp_gt, mask, 3.0) for disp_est in disp_ests]
     loss.backward()
     optimizer.step()
-    return tensor2float(loss), tensor2float(scalar_outputs), image_outputs
+    return tensor2float(loss)
 
 
 # test one sample
